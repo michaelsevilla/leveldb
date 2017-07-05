@@ -21,9 +21,11 @@ main(
     int argc,
     char ** argv)
 {
-    bool error_seen, csv_header, diff_mode, running;
+    bool error_seen, csv_header, diff_mode, running, verbose;
     int error_counter;
     unsigned diff_seconds;
+    unsigned top_metrics = leveldb::ePerfCountEnumSize;
+    unsigned bot_metrics = 0;
     char ** cursor;
     char *graphite = NULL;
     char *port = NULL;
@@ -33,6 +35,7 @@ main(
     error_counter=0;
 
     csv_header=false;
+    verbose=false;
     diff_mode=false;
     diff_seconds=1;
 
@@ -48,6 +51,7 @@ main(
             switch(flag)
             {
                 case 'h':  csv_header=true; break;
+                case 'v':  verbose=true; break;
                 case 'd':
                     diff_mode=true;
                     ++cursor;
@@ -55,15 +59,21 @@ main(
                     break;
                 case 'g':
                     ++cursor;
-                    graphite = (char*) malloc(strlen(*cursor) + 1); //memleak
+                    graphite = (char*) malloc(strlen(*cursor) + 1); //memleak LOL
                     strcpy(graphite, *cursor);
-                    fprintf(stdout, "GRAPHITE ADDRESS is %s\n", graphite);
                     break;
                 case 'p':
                     ++cursor;
-                    port = (char *) malloc(strlen(*cursor) + 1); //memleak
-                    strcpy(graphite, *cursor);
-                    fprintf(stdout, "GRAPHITE PORT is %s\n", port);
+                    port = (char *) malloc(strlen(*cursor) + 1); //memleak LOL
+                    strcpy(port, *cursor);
+                    break;
+                case 't':
+                    ++cursor;
+                    top_metrics=strtoul(*cursor, NULL, 10); 
+                    break;
+                case 'b':
+                    ++cursor;
+                    bot_metrics=strtoul(*cursor, NULL, 10); 
                     break;
                 default:
                     fprintf(stderr, " option \'%c\' is not valid\n", flag);
@@ -136,20 +146,19 @@ main(
 
                     if (!first_pass)
                     {
-                        for (loop=0; loop<leveldb::ePerfCountEnumSize; ++loop)
+                        for (loop=bot_metrics; loop < top_metrics; ++loop)
                         {
-                            if (cur_counters[loop]-prev_counters[loop] > 0) {
-                                long int t = static_cast<long int>(time(NULL));
-                                std::stringstream ss;
-                                ss << "pl3.boost.test." << leveldb::PerformanceCounters::GetNamePtr(loop)
-                                   << " " << cur_counters[loop]-prev_counters[loop]
-                                   << " " << t
-                                   << std::endl;
-                                std::string message(ss.str());
-                                fprintf(stdout, "... sending: %s\n", message.c_str());
-                                boost::system::error_code ignored_error;
-                                boost::asio::write(socket, boost::asio::buffer(message), ignored_error);
-                            }
+                            long int t = static_cast<long int>(time(NULL));
+                            std::stringstream ss;
+                            ss << "pl3.boost.test." << leveldb::PerformanceCounters::GetNamePtr(loop)
+                               << " " << cur_counters[loop]-prev_counters[loop]
+                               << " " << t
+                               << std::endl;
+                            std::string message(ss.str());
+                            boost::system::error_code ignored_error;
+                            boost::asio::write(socket, boost::asio::buffer(message), ignored_error);
+                            if (verbose)
+                              fprintf(stdout, "DB activity: %s", message.c_str());
                         }   // for
                     }   // if
 
@@ -201,7 +210,12 @@ command_help()
     fprintf(stderr, "perf_dump [option]*\n");
     fprintf(stderr, "  options\n");
     fprintf(stderr, "      -h    print csv formatted header line (once)\n");
+    fprintf(stderr, "      -v    be verbose with what you send to graphite\n");
     fprintf(stderr, "      -d n  print diff ever n seconds\n");
+    fprintf(stderr, "      -g ip send metrics to graphite server at ip\n");
+    fprintf(stderr, "      -p pt send metrics to port pt (2003 is plaintext)\n");
+    fprintf(stderr, "      -t n  collect metrics about metric n\n");
+    fprintf(stderr, "      -b n  collect metrics below metric n\n");
 }   // command_help
 
 namespace leveldb {
