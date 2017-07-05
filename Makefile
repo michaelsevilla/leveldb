@@ -55,7 +55,7 @@ MEMENVLIBRARY = libmemenv.a
 # static link leveldb to tools to simplify platform usage (if Linux)
 #
 ifeq ($(PLATFORM),OS_LINUX)
-LEVEL_LDFLAGS := -L . -Wl,-non_shared -lleveldb -Wl,-call_shared
+LEVEL_LDFLAGS := -L . -Wl,-non_shared -lleveldb -Wl,-call_shared -lboost_system
 else
 LEVEL_LDFLAGS := -L . -lleveldb
 endif

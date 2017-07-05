@@ -1,6 +1,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <boost/asio.hpp>
+#include <sstream>
+#include <string.h>
 
 #include "leveldb/env.h"
 #include "leveldb/perf_count.h"
@@ -8,6 +11,8 @@
 
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
+
+using boost::asio::ip::tcp;
 
 void command_help();
 
@@ -20,6 +25,8 @@ main(
     int error_counter;
     unsigned diff_seconds;
     char ** cursor;
+    char *graphite = NULL;
+    char *port = NULL;
 
     running=true;
     error_seen=false;
@@ -46,7 +53,18 @@ main(
                     ++cursor;
                     diff_seconds=strtoul(*cursor, NULL, 10);
                     break;
-
+                case 'g':
+                    ++cursor;
+                    graphite = (char*) malloc(strlen(*cursor) + 1); //memleak
+                    strcpy(graphite, *cursor);
+                    fprintf(stdout, "GRAPHITE ADDRESS is %s\n", graphite);
+                    break;
+                case 'p':
+                    ++cursor;
+                    port = (char *) malloc(strlen(*cursor) + 1); //memleak
+                    strcpy(graphite, *cursor);
+                    fprintf(stdout, "GRAPHITE PORT is %s\n", port);
+                    break;
                 default:
                     fprintf(stderr, " option \'%c\' is not valid\n", flag);
                     command_help();
@@ -71,6 +89,18 @@ main(
     // attach to shared memory if params looking good
     if (!error_seen)
     {
+        // connect to graphite
+        if (graphite == NULL || port == NULL) {
+            fprintf(stderr, "ERROR: graphite settings (-g and -p) required\n");
+            exit(EXIT_FAILURE);
+        }
+        boost::asio::io_service io_service;
+        tcp::resolver resolver(io_service);
+        tcp::resolver::query query(graphite, port);
+        tcp::resolver::iterator endpoint_iterator = resolver.resolve(query);
+        tcp::socket socket(io_service);
+        boost::asio::connect(socket, endpoint_iterator);
+
         const leveldb::PerformanceCounters * perf_ptr;
         bool first_pass;
 
@@ -108,10 +138,18 @@ main(
                     {
                         for (loop=0; loop<leveldb::ePerfCountEnumSize; ++loop)
                         {
-                            printf("%" PRIu64 ", %" PRIu64 ", %s, %" PRIu64 "\n",
-                                   cur_time, cur_time-first_time,
-                                   leveldb::PerformanceCounters::GetNamePtr(loop),
-                                   cur_counters[loop]-prev_counters[loop]);
+                            if (cur_counters[loop]-prev_counters[loop] > 0) {
+                                long int t = static_cast<long int>(time(NULL));
+                                std::stringstream ss;
+                                ss << "pl3.boost.test." << leveldb::PerformanceCounters::GetNamePtr(loop)
+                                   << " " << cur_counters[loop]-prev_counters[loop]
+                                   << " " << t
+                                   << std::endl;
+                                std::string message(ss.str());
+                                fprintf(stdout, "... sending: %s\n", message.c_str());
+                                boost::system::error_code ignored_error;
+                                boost::asio::write(socket, boost::asio::buffer(message), ignored_error);
+                            }
                         }   // for
                     }   // if
 
