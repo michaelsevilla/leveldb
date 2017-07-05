@@ -4,6 +4,8 @@
 #include <boost/asio.hpp>
 #include <sstream>
 #include <string.h>
+#include <fstream>
+#include <vector>
 
 #include "leveldb/env.h"
 #include "leveldb/perf_count.h"
@@ -24,11 +26,10 @@ main(
     bool error_seen, csv_header, diff_mode, running, verbose;
     int error_counter;
     unsigned diff_seconds;
-    unsigned top_metrics = leveldb::ePerfCountEnumSize;
-    unsigned bot_metrics = 0;
     char ** cursor;
     char *graphite = NULL;
     char *port = NULL;
+    char *metrics_f = NULL;
 
     running=true;
     error_seen=false;
@@ -67,13 +68,10 @@ main(
                     port = (char *) malloc(strlen(*cursor) + 1); //memleak LOL
                     strcpy(port, *cursor);
                     break;
-                case 't':
+                case 'f':
                     ++cursor;
-                    top_metrics=strtoul(*cursor, NULL, 10); 
-                    break;
-                case 'b':
-                    ++cursor;
-                    bot_metrics=strtoul(*cursor, NULL, 10); 
+                    metrics_f = (char *) malloc(strlen(*cursor) + 1); //memleak LOL
+                    strcpy(metrics_f, *cursor);
                     break;
                 default:
                     fprintf(stderr, " option \'%c\' is not valid\n", flag);
@@ -99,6 +97,33 @@ main(
     // attach to shared memory if params looking good
     if (!error_seen)
     {
+        // read the metrics
+        std::vector<int> metrics;
+        if (metrics_f == NULL) {
+            for (int i = 0; i < leveldb::ePerfCountEnumSize; i++)
+                metrics.push_back(i);
+        } else {
+            std::ifstream f(metrics_f);
+            std::string metric, collect;
+            int i = 0;
+            while (f >> collect >> metric) {
+                if (collect == "1") {
+                    metrics.push_back(i);
+                    fprintf(stdout,
+                            "... collecting metric=%s at location=%d\n",
+                            metric.c_str(), i);
+                }
+                i++;
+            }
+        }
+
+        // hostname used for metric hierarchy
+        char hostname[HOST_NAME_MAX];
+        if (gethostname(hostname, HOST_NAME_MAX) < 0) {
+            fprintf(stderr, "ERROR: failed to get hostname");
+            exit(EXIT_FAILURE);
+        }
+
         // connect to graphite
         if (graphite == NULL || port == NULL) {
             fprintf(stderr, "ERROR: graphite settings (-g and -p) required\n");
@@ -146,12 +171,14 @@ main(
 
                     if (!first_pass)
                     {
-                        for (loop=bot_metrics; loop < top_metrics; ++loop)
-                        {
+                        for (std::vector<int>::iterator i = metrics.begin();
+                             i != metrics.end();
+                             i++) {
                             long int t = static_cast<long int>(time(NULL));
                             std::stringstream ss;
-                            ss << "pl3.boost.test." << leveldb::PerformanceCounters::GetNamePtr(loop)
-                               << " " << cur_counters[loop]-prev_counters[loop]
+                            ss << hostname << ".leveldb."
+                               << leveldb::PerformanceCounters::GetNamePtr(*i)
+                               << " " << cur_counters[*i]-prev_counters[*i]
                                << " " << t
                                << std::endl;
                             std::string message(ss.str());
@@ -214,8 +241,7 @@ command_help()
     fprintf(stderr, "      -d n  print diff ever n seconds\n");
     fprintf(stderr, "      -g ip send metrics to graphite server at ip\n");
     fprintf(stderr, "      -p pt send metrics to port pt (2003 is plaintext)\n");
-    fprintf(stderr, "      -t n  collect metrics about metric n\n");
-    fprintf(stderr, "      -b n  collect metrics below metric n\n");
+    fprintf(stderr, "      -f f  send metrics from file f to graphite\n");
 }   // command_help
 
 namespace leveldb {
